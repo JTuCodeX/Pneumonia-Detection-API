@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    container_name: pneumonia-api
+    ports:
+      - "8000:8000"
+
+    # Default: development
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+    # Use "dev" profile by default
+    profiles: ["dev"]
+
+  api-prod:
+    build: .
+    container_name: pneumonia-api-prod
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: always
+    profiles: ["prod"]

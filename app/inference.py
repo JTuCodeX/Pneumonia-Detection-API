@@ -17,7 +17,7 @@ transform = transforms.Compose([
 
 def load_model():
     """Load trained ResNet18 model with weights."""
-    model = models.resnet18(pretrained=False)
+    model = models.resnet18(weights=None)
     num_features = model.fc.in_features
     model.fc = nn.Linear(num_features, 2)  # NORMAL vs PNEUMONIA
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
