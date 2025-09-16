@@ -1,12 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Pneumonia Detection</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
-
   <!-- Modal-like card -->
   <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg">
     <!-- Header -->
@@ -16,7 +15,8 @@
     </div>
 
     <!-- Upload area -->
-    <label for="file-input" 
+    <label id="upload-area"
+           for="file-input"
            class="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100 transition">
       <div class="flex flex-col items-center justify-center">
         <svg class="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -37,14 +37,16 @@
 
     <!-- Actions -->
     <div class="flex justify-between mt-6">
-      <button onclick="resetForm()" 
+      <button id="cancel-btn" onclick="resetForm()"
               class="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-100">Cancel</button>
-      <button onclick="submitForm()" 
-              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">Upload & Predict</button>
+      <button id="upload-btn" onclick="submitForm()"
+              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+        <span id="upload-btn-text">Upload & Predict</span>
+      </button>
     </div>
 
     <!-- Result -->
-    <div id="result" class="mt-4 text-center text-gray-700 font-medium"></div>
+    <div id="result" class="mt-4 text-center text-gray-700 font-medium" aria-live="polite"></div>
   </div>
 
   <script>
@@ -52,7 +54,11 @@
     const preview = document.getElementById("preview");
     const previewImg = document.getElementById("preview-img");
     const resultDiv = document.getElementById("result");
+    const uploadBtn = document.getElementById("upload-btn");
+    const uploadBtnText = document.getElementById("upload-btn-text");
+    const uploadArea = document.getElementById("upload-area");
 
+    // Preview selected file
     fileInput.addEventListener("change", () => {
       const file = fileInput.files[0];
       if (file) {
@@ -65,10 +71,54 @@
       }
     });
 
+    // Optional: basic drag & drop support to update input file
+    ["dragenter", "dragover"].forEach(evt =>
+      uploadArea.addEventListener(evt, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        uploadArea.classList.add("bg-gray-100", "ring-2", "ring-blue-200");
+      })
+    );
+    ["dragleave", "drop"].forEach(evt =>
+      uploadArea.addEventListener(evt, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        uploadArea.classList.remove("bg-gray-100", "ring-2", "ring-blue-200");
+      })
+    );
+    uploadArea.addEventListener("drop", (e) => {
+      const dt = e.dataTransfer;
+      if (dt && dt.files && dt.files.length) {
+        fileInput.files = dt.files;
+        fileInput.dispatchEvent(new Event('change'));
+      }
+    });
+
     function resetForm() {
       fileInput.value = "";
+      previewImg.src = "";
       preview.classList.add("hidden");
       resultDiv.innerHTML = "";
+      enableButton();
+    }
+
+    function disableButton() {
+      uploadBtn.setAttribute("disabled", "true");
+      uploadBtn.classList.add("opacity-60", "cursor-not-allowed");
+      uploadBtnText.innerHTML = '⏳ Processing...';
+      // optional spinner
+      if (!document.getElementById("btn-spinner")) {
+        const spinner = document.createElement("span");
+        spinner.id = "btn-spinner";
+        spinner.className = "w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block";
+        uploadBtn.prepend(spinner);
+      }
+    }
+
+    function enableButton() {
+      uploadBtn.removeAttribute("disabled");
+      uploadBtn.classList.remove("opacity-60", "cursor-not-allowed");
+      uploadBtnText.innerHTML = "Upload & Predict";
+      const spinner = document.getElementById("btn-spinner");
+      if (spinner) spinner.remove();
     }
 
     async function submitForm() {
@@ -80,7 +130,9 @@
       const formData = new FormData();
       formData.append("file", fileInput.files[0]);
 
-      resultDiv.innerText = "⏳ Processing...";
+      // UI state
+      resultDiv.innerHTML = "";
+      disableButton();
 
       try {
         const response = await fetch("/predict", {
@@ -88,22 +140,73 @@
           body: formData
         });
 
-        const result = await response.json();
-        if (result.error) {
-          resultDiv.innerHTML = `<p class="text-red-600">❌ ${result.error}</p>`;
-        } else {
-          resultDiv.innerHTML = `
-            <p class="text-lg">Prediction: 
-              <span class="font-bold text-blue-600">${result.prediction}</span>
-            </p>
-            <p class="text-sm text-gray-600">Confidence: ${(result.confidence * 100).toFixed(2)}%</p>
-          `;
+        let result;
+        // try parse json; if invalid, show status
+        try {
+          result = await response.json();
+        } catch (err) {
+          throw new Error(`Server returned ${response.status} ${response.statusText}`);
         }
+
+        if (!response.ok) {
+          // server returned error code - try to show meaningful message
+          const message = result && (result.error || result.detail || JSON.stringify(result)) || response.statusText;
+          resultDiv.innerHTML = `<p class="text-red-600">❌ ${message}</p>`;
+          enableButton();
+          return;
+        }
+
+        // Successful response
+        // Expected shape:
+        // { prediction: "PNEUMONIA", confidence: 0.9725, probabilities: { NORMAL: 0.0275, PNEUMONIA: 0.9725 } }
+        const pred = result.prediction || "Unknown";
+        const conf = parseFloat(result.confidence) || 0;
+        const probs = result.probabilities || null;
+
+        // Build HTML output
+        let html = `
+          <div class="mb-3">
+            <p class="text-lg">Prediction:
+              <span class="font-bold text-blue-600"> ${pred}</span>
+            </p>
+            <p class="text-sm text-gray-600">Confidence: <span class="font-semibold">${(conf * 100).toFixed(2)}%</span></p>
+          </div>
+        `;
+
+        if (probs && typeof probs === 'object') {
+          // Sort classes by probability descending
+          const entries = Object.entries(probs).map(([k, v]) => [k, parseFloat(v)]);
+          entries.sort((a,b) => b[1] - a[1]);
+
+          html += `<div class="space-y-3 mt-3 text-left">`;
+          for (const [label, p] of entries) {
+            const pct = Math.max(0, Math.min(100, (p * 100)));
+            html += `
+              <div>
+                <div class="flex justify-between mb-1">
+                  <span class="text-sm font-medium text-gray-700">${label}</span>
+                  <span class="text-sm font-medium text-gray-600">${pct.toFixed(2)}%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                  <div class="h-3 rounded-full ${label === pred ? 'bg-blue-600' : 'bg-gray-500/60'}" style="width: ${pct}%;"></div>
+                </div>
+              </div>
+            `;
+          }
+          html += `</div>`;
+        } else {
+          // If probabilities not provided, show raw result as fallback
+          html += `<pre class="text-xs text-left mt-3 bg-gray-50 p-3 rounded">${JSON.stringify(result, null, 2)}</pre>`;
+        }
+
+        resultDiv.innerHTML = html;
       } catch (err) {
-        resultDiv.innerHTML = `<p class="text-red-600">⚠️ Request failed</p>`;
+        console.error(err);
+        resultDiv.innerHTML = `<p class="text-red-600">⚠️ Request failed: ${err.message}</p>`;
+      } finally {
+        enableButton();
       }
     }
   </script>
-
 </body>
 </html>
